@@ -1,6 +1,5 @@
 package io.jenkins.plugins.analysis.core.scm;
 
-import java.io.IOException;
 import java.util.List;
 
 import org.junit.Before;
@@ -8,10 +7,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.jvnet.hudson.test.Issue;
 
-import hudson.FilePath;
 import hudson.model.FreeStyleProject;
 import hudson.model.Result;
-import hudson.model.TopLevelItem;
 import hudson.plugins.git.GitSCM;
 import hudson.plugins.git.extensions.impl.RelativeTargetDirectory;
 import jenkins.plugins.git.GitSCMBuilder;
@@ -38,6 +35,8 @@ import static org.assertj.core.api.Assertions.*;
  */
 public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
 
+    private static final String BRANCH = "master";
+
     /**
      * Local git integration for testing purposes.
      */
@@ -53,7 +52,7 @@ public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
     @Before
     public void init() throws Exception {
         repository.init();
-        repository.git("checkout", "master");
+        repository.git("checkout", BRANCH);
     }
 
     /**
@@ -68,11 +67,15 @@ public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
         String file = "opentasks.txt";
         addFileToGit("Alice", "alice@example.com", "Line 1\nLine 2\n", file, "init opentasks");
         addFileToGit("Bob", "bob@example.com", "Line 1\nLine 2 but better\n", file, "update opentasks");
+
         FreeStyleProject job = createFreeStyleProject();
         job.setScm(new GitSCM(repository.fileUrl()));
-        writeStringToWorkspaceFile(job, "build/issues.txt",
+
+        addFileToGit("bot", "bot@example.com",
                 "[WARNING] opentasks.txt:[1,0] [deprecation] something has been deprecated\n"
-                        + "[WARNING] opentasks.txt:[2,0] [deprecation] something else has been deprecated too\n");
+                        + "[WARNING] opentasks.txt:[2,0] [deprecation] something else has been deprecated too\n",
+                "issues.txt", "Created issue file");
+
         enableGenericWarnings(job, new Java());
 
         AnalysisResult result = scheduleBuildAndAssertStatus(job, Result.SUCCESS);
@@ -109,9 +112,10 @@ public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
         FreeStyleProject job = createFreeStyleProject();
         job.setScm(gitSCM);
         enableGenericWarnings(job, new Java());
-        writeStringToWorkspaceFile(job, "build/issues.txt",
+        addFileToGit("bot", "bot@example.com",
                 "[WARNING] src/opentasks.txt:[1,0] [deprecation] something has been deprecated\n"
-                        + "[WARNING] src/opentasks.txt:[2,0] [deprecation] something else has been deprecated too\n");
+                        + "[WARNING] src/opentasks.txt:[2,0] [deprecation] something else has been deprecated too\n",
+                "build/issues.txt", "issues");
 
         AnalysisResult result = scheduleBuildAndAssertStatus(job, Result.SUCCESS);
         SourceControlTable blames = new DetailsTab(getWebPage(JS_ENABLED, result)).select(BLAMES);
@@ -123,28 +127,6 @@ public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
         List<SourceControlRow> rows = blames.getRows();
         verifySourceControlRow(rows.get(0), "Alice", "alice@example.com", "something has been deprecated");
         verifySourceControlRow(rows.get(1), "Bob", "bob@example.com", "something else has been deprecated too");
-    }
-
-    /**
-     * Writes given content into a file within the workspace.
-     *
-     * @param job
-     *         Job to create file in.
-     * @param file
-     *         Name of file to create.
-     * @param text
-     *         Text to write into file.
-     *
-     * @throws IOException
-     *         When writing content gets interrupted.
-     * @throws InterruptedException
-     *         When writing content fails.
-     */
-    private void writeStringToWorkspaceFile(final TopLevelItem job, final String file, final String text)
-            throws IOException, InterruptedException {
-        FilePath ws = getJenkins().jenkins.getWorkspaceFor(job);
-
-        ws.child(file).write(text, "UTF-8");
     }
 
     /**
