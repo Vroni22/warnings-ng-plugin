@@ -1,13 +1,17 @@
 package io.jenkins.plugins.analysis.core.scm;
 
+import java.io.IOException;
 import java.util.List;
 
-import org.junit.ClassRule;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.jvnet.hudson.test.Issue;
 
+import hudson.FilePath;
 import hudson.model.FreeStyleProject;
 import hudson.model.Result;
+import hudson.model.TopLevelItem;
 import hudson.plugins.git.GitSCM;
 import hudson.plugins.git.extensions.impl.RelativeTargetDirectory;
 import jenkins.plugins.git.GitSCMBuilder;
@@ -37,8 +41,20 @@ public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
     /**
      * Local git integration for testing purposes.
      */
-    @ClassRule
-    public static GitSampleRepoRule repository = new GitSampleRepoRule();
+    @Rule
+    public GitSampleRepoRule repository = new GitSampleRepoRule();
+
+    /**
+     * Initializes the git repository.
+     *
+     * @throws Exception
+     *         When git interaction fails.
+     */
+    @Before
+    public void init() throws Exception {
+        repository.init();
+        repository.git("checkout", "master");
+    }
 
     /**
      * Creates a repository with a single file that is changed by two committer. Afterwards the plugin has to record
@@ -50,15 +66,24 @@ public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
     @Test
     public void shouldReadCorrectBlameInformation() throws Exception {
         String file = "opentasks.txt";
-        String issuesFile = "issues.txt";
-        String branch = "blame-info";
-        initGitAndFlawedTestFile(branch, file, issuesFile);
-
+        addFileToGit("Alice", "alice@example.com", "Line 1\nLine 2\n", file, "init opentasks");
+        addFileToGit("Bob", "bob@example.com", "Line 1\nLine 2 but better\n", file, "update opentasks");
         FreeStyleProject job = createFreeStyleProject();
         job.setScm(new GitSCM(repository.fileUrl()));
+        writeStringToWorkspaceFile(job, "build/issues.txt",
+                "[WARNING] opentasks.txt:[1,0] [deprecation] something has been deprecated\n"
+                        + "[WARNING] opentasks.txt:[2,0] [deprecation] something else has been deprecated too\n");
         enableGenericWarnings(job, new Java());
 
-        scheduleBuildAndVerifyBlames(job);
+        AnalysisResult result = scheduleBuildAndAssertStatus(job, Result.SUCCESS);
+        SourceControlTable blames = new DetailsTab(getWebPage(JS_ENABLED, result)).select(BLAMES);
+
+        assertThat(result.getErrorMessages()).isEmpty();
+        assertThat(result.getInfoMessages()).contains("-> found 2 issues (skipped 0 duplicates)",
+                "-> blamed authors of issues in 1 files");
+        List<SourceControlRow> rows = blames.getRows();
+        verifySourceControlRow(rows.get(0), "Alice", "alice@example.com", "something has been deprecated");
+        verifySourceControlRow(rows.get(1), "Bob", "bob@example.com", "something else has been deprecated too");
     }
 
     /**
@@ -72,12 +97,11 @@ public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
     @Test
     @Issue("JENKINS-57260")
     public void checkGitBlameInOutOfTreeBuild() throws Exception {
-        String file = "src/opentasks.txt";
-        String issuesFile = "build/issues.txt";
-        String branch = "out-of-tree-build";
-        initGitAndFlawedTestFile(branch, file, issuesFile);
+        String file = "opentasks.txt";
+        addFileToGit("Alice", "alice@example.com", "Line 1\nLine 2\n", file, "init opentasks");
+        addFileToGit("Bob", "bob@example.com", "Line 1\nLine 2 but better\n", file, "update opentasks");
 
-        GitSCMBuilder builder = new GitSCMBuilder(new SCMHead(branch), null, repository.fileUrl(), null);
+        GitSCMBuilder builder = new GitSCMBuilder(new SCMHead("master"), null, repository.fileUrl(), null);
         RelativeTargetDirectory sourceDirectory = new RelativeTargetDirectory("src");
         builder.withExtension(sourceDirectory);
         GitSCM gitSCM = builder.build();
@@ -85,14 +109,10 @@ public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
         FreeStyleProject job = createFreeStyleProject();
         job.setScm(gitSCM);
         enableGenericWarnings(job, new Java());
+        writeStringToWorkspaceFile(job, "build/issues.txt",
+                "[WARNING] src/opentasks.txt:[1,0] [deprecation] something has been deprecated\n"
+                        + "[WARNING] src/opentasks.txt:[2,0] [deprecation] something else has been deprecated too\n");
 
-        scheduleBuildAndVerifyBlames(job);
-    }
-
-    /**
-     * Schedules build and verifies all blame rows in SourceControlTable
-     */
-    private void scheduleBuildAndVerifyBlames(final FreeStyleProject job) {
         AnalysisResult result = scheduleBuildAndAssertStatus(job, Result.SUCCESS);
         SourceControlTable blames = new DetailsTab(getWebPage(JS_ENABLED, result)).select(BLAMES);
 
@@ -106,7 +126,29 @@ public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
     }
 
     /**
-     * Check whether the given SourceControlRow has the given author, email and detailsContent
+     * Writes given content into a file within the workspace.
+     *
+     * @param job
+     *         Job to create file in.
+     * @param file
+     *         Name of file to create.
+     * @param text
+     *         Text to write into file.
+     *
+     * @throws IOException
+     *         When writing content gets interrupted.
+     * @throws InterruptedException
+     *         When writing content fails.
+     */
+    private void writeStringToWorkspaceFile(final TopLevelItem job, final String file, final String text)
+            throws IOException, InterruptedException {
+        FilePath ws = getJenkins().jenkins.getWorkspaceFor(job);
+
+        ws.child(file).write(text, "UTF-8");
+    }
+
+    /**
+     * Check whether the given SourceControlRow has the given author, email and detailsContent.
      *
      * @param row
      *         SourceControlRow to be checked
@@ -122,36 +164,6 @@ public class GitBlameITest extends IntegrationTestWithJenkinsPerSuite {
         assertThat(row.getValue(AUTHOR)).isEqualTo(author);
         assertThat(row.getValue(EMAIL)).isEqualTo(email);
         assertThat(row.getValue(DETAILS_CONTENT)).isEqualTo(detailsContent);
-    }
-
-    /**
-     * Initialise the git repository with one src file containing flawed code edited by two users and one issue file
-     * containing corresponding msg
-     *
-     * @param srcFile
-     *         Local path where the source file should be created
-     * @param issuesFile
-     *         Local path where the issue file should be created
-     *
-     * @throws Exception
-     *         When initializing git fails.
-     */
-    private void initGitAndFlawedTestFile(final String branch, final String srcFile, final String issuesFile)
-            throws Exception {
-        repository.init();
-        repository.git("checkout", branch);
-
-        // make first change as ALICE
-        addFileToGit("Alice", "alice@example.com", "Line 1\nLine 2\n", srcFile, "init opentasks");
-
-        // second change as BOB
-        addFileToGit("Bob", "bob@example.com", "Line 1\nLine 2 but better\n", srcFile, "update opentasks");
-
-        // add issues.txt to avoid copying it by hand
-        repository.write(issuesFile, "[WARNING] opentasks.txt:[1,0] [deprecation] something has been deprecated\n"
-                + "[WARNING] opentasks.txt:[2,0] [deprecation] something else has been deprecated too\n");
-        repository.git("add", issuesFile);
-        repository.git("commit", "-m", "add issue file", issuesFile);
     }
 
     /**
