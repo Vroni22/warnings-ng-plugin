@@ -1,6 +1,7 @@
 package io.jenkins.plugins.analysis.warnings;
 
 import java.io.IOException;
+import java.util.List;
 
 import org.junit.Test;
 import org.jvnet.hudson.test.Issue;
@@ -15,6 +16,7 @@ import io.jenkins.plugins.analysis.core.model.AnalysisResult;
 import io.jenkins.plugins.analysis.core.testutil.IntegrationTestWithJenkinsPerTest;
 import io.jenkins.plugins.analysis.warnings.recorder.pageobj.DetailsTab;
 import io.jenkins.plugins.analysis.warnings.recorder.pageobj.DetailsTab.TabType;
+import io.jenkins.plugins.analysis.warnings.recorder.pageobj.SourceControlRow;
 import io.jenkins.plugins.analysis.warnings.recorder.pageobj.SourceControlTable;
 
 import static io.jenkins.plugins.analysis.core.testutil.IntegrationTest.JavaScriptSupport.*;
@@ -57,6 +59,7 @@ public class RemoteITest extends IntegrationTestWithJenkinsPerTest {
         assertThat(detailsTab.getTabTypes()).containsExactly(TabType.TYPES, TabType.ISSUES);
 
         SourceControlTable blames = new DetailsTab(getWebPage(JS_ENABLED, result)).select(BLAMES);
+        List<SourceControlRow> rows = blames.getRows();
 
     }
 

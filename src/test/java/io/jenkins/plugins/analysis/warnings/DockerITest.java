@@ -1,7 +1,5 @@
 package io.jenkins.plugins.analysis.warnings;
 
-import java.io.IOException;
-
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -113,7 +111,7 @@ public class DockerITest extends IntegrationTestWithJenkinsPerSuite {
      *         Container to build an jenkins agent within.
      *
      * @return Agent within given container.
-     * @throws IOException
+     * @throws Exception
      *         When slave creation or waiting for node start fails.
      */
     private DumbSlave createAgent(final DockerContainer container) throws Exception {
